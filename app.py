@@ -2,15 +2,17 @@
 
 Run:  python3 app.py        then open http://localhost:8000
 """
+import os
 import re
 import urllib.parse
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import db
 import templates as T
 import services as S
 
-PORT = 8000
+PORT = int(os.environ.get("PORT", 8000))
 
 
 # ---- small routing helper -------------------------------------------------
@@ -48,8 +50,16 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8") if length else ""
         return {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
 
+    def _query(self):
+        qs = urllib.parse.urlparse(self.path).query
+        return {k: v[0] for k, v in urllib.parse.parse_qs(qs).items()}
+
     def _dispatch(self, method):
         path = urllib.parse.urlparse(self.path).path
+        # On Vercel all paths are rewritten to this function; if the rewrite
+        # target leaks through as the path, recover the original route.
+        if path.startswith("/api/index"):
+            path = path[len("/api/index"):] or "/"
         for m, rx, fn in ROUTES:
             if m != method:
                 continue
@@ -85,8 +95,10 @@ def _organizer_by_token(conn, token):
 
 def _upcoming_game(conn):
     """The next game that hasn't happened yet, else the most recent one."""
+    today = date.today().isoformat()  # pass as a param — portable across backends
     return conn.execute(
-        "SELECT * FROM games WHERE game_date >= date('now') ORDER BY game_date, start_time LIMIT 1"
+        "SELECT * FROM games WHERE game_date >= ? ORDER BY game_date, start_time LIMIT 1",
+        (today,),
     ).fetchone() or conn.execute(
         "SELECT * FROM games ORDER BY game_date DESC, start_time DESC LIMIT 1"
     ).fetchone()
@@ -96,10 +108,14 @@ def _upcoming_game(conn):
 @route("GET", "/")
 def index(h, conn):
     game = _upcoming_game(conn)
-    org = conn.execute(
-        "SELECT token FROM players WHERE is_organizer = 1 ORDER BY id LIMIT 1"
-    ).fetchone()
-    org_token = org["token"] if org else None
+    # Only expose the organizer shortcut on the public board in local dev. In
+    # production (Postgres) the admin link is private — retrieve it via /setup.
+    org_token = None
+    if not db.USE_PG:
+        org = conn.execute(
+            "SELECT token FROM players WHERE is_organizer = 1 ORDER BY id LIMIT 1"
+        ).fetchone()
+        org_token = org["token"] if org else None
     if game:
         rows = conn.execute(
             """SELECT p.*, a.status AS av
@@ -115,6 +131,18 @@ def index(h, conn):
         ).fetchall()
         players_with_status = [(r, None) for r in rows]
     h._html(T.landing(game, players_with_status, org_token))
+
+
+@route("GET", r"/setup")
+def setup(h, conn):
+    """One-time retrieval of organizer admin link(s). Gated by SETUP_KEY env."""
+    key = os.environ.get("SETUP_KEY")
+    if not key or h._query().get("key") != key:
+        return h._html(T.simple("Setup", "Setup is not available."), status=404)
+    orgs = conn.execute(
+        "SELECT name, email, token FROM players WHERE is_organizer = 1 ORDER BY id"
+    ).fetchall()
+    h._html(T.setup_page(orgs))
 
 
 # ---- routes: player -------------------------------------------------------

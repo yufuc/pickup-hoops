@@ -389,6 +389,25 @@ def admin_game(org, game, unassigned, light, dark, not_playing, summary):
     return page(game_label(game), body, nav)
 
 
+def setup_page(orgs):
+    if not orgs:
+        rows = ("<div class='card muted'>No organizer yet. Set the ADMIN_EMAIL "
+                "environment variable and redeploy, then reload this page.</div>")
+    else:
+        rows = "".join(
+            f"<div class='card'><strong>{escape(o['name'])}</strong> "
+            f"<span class='muted'>({escape(o['email'])})</span><br>"
+            f"<a href='/admin/{o['token']}'>/admin/{escape(o['token'])}</a></div>"
+            for o in orgs
+        )
+    body = (
+        "<h1>🔑 Organizer access</h1>"
+        "<p class='hint'>Bookmark your admin link below. Keep it private — anyone "
+        "with it can manage games and the roster.</p>" + rows
+    )
+    return page("Setup", body, [("🏀 Home", "/")])
+
+
 def simple(title, message, back=None):
     nav = [("🏀 Home", "/")]
     if back:
