@@ -45,12 +45,13 @@ based on whether a database URL is present in the environment.
    | Variable | Required | Purpose |
    |----------|----------|---------|
    | `DATABASE_URL` | ✅ | Postgres connection string (or `POSTGRES_URL`) |
-   | `ADMIN_EMAIL` | ✅ (first deploy) | Bootstraps the first organizer account |
-   | `ADMIN_NAME` | optional | Display name for that organizer |
-   | `SETUP_KEY` | ✅ (first deploy) | Unlocks `/setup` to retrieve the admin link |
+   | `SETUP_KEY` | optional | Re-open `/setup` after the first organizer exists |
 
-4. **Deploy.** Then visit `https://<your-app>/setup?key=<SETUP_KEY>` once to get
-   your private organizer admin link, and bookmark it.
+4. **Deploy**, then visit `https://<your-app>/setup`. On a fresh database (no
+   organizer yet) this page is **open** so you can create your first organizer and
+   get its private `/admin/…` link — bookmark it. Once an organizer exists, `/setup`
+   locks; set `SETUP_KEY` and use `/setup?key=<SETUP_KEY>` if you need it again
+   (you can also add more organizers from the dashboard's roster).
 
 How it maps to Vercel: `api/index.py` exposes the request handler as `handler`
 (invoked per request — no `serve_forever`). `vercel.json` explicitly builds it with

@@ -389,22 +389,30 @@ def admin_game(org, game, unassigned, light, dark, not_playing, summary):
     return page(game_label(game), body, nav)
 
 
-def setup_page(orgs):
-    if not orgs:
-        rows = ("<div class='card muted'>No organizer yet. Set the ADMIN_EMAIL "
-                "environment variable and redeploy, then reload this page.</div>")
-    else:
-        rows = "".join(
+def setup_page(orgs, key):
+    if orgs:
+        links = "".join(
             f"<div class='card'><strong>{escape(o['name'])}</strong> "
             f"<span class='muted'>({escape(o['email'])})</span><br>"
-            f"<a href='/admin/{o['token']}'>/admin/{escape(o['token'])}</a></div>"
+            f"<a href='/admin/{o['token']}'>Open organizer dashboard →</a></div>"
             for o in orgs
         )
-    body = (
-        "<h1>🔑 Organizer access</h1>"
-        "<p class='hint'>Bookmark your admin link below. Keep it private — anyone "
-        "with it can manage games and the roster.</p>" + rows
+        intro = ("<p class='hint'>Bookmark your admin link below — keep it private, "
+                 "anyone with it can manage games and the roster.</p>")
+    else:
+        links = "<div class='card muted'>No organizer yet — create one below to get your admin link.</div>"
+        intro = ("<p class='hint'>This database has no organizer yet. Create one to "
+                 "get your private admin dashboard link.</p>")
+
+    form = (
+        f"<div class='card'><h2 style='margin-top:0'>Add an organizer</h2>"
+        f"<form method='post' action='/setup/create' class='row'>"
+        f"<input type='hidden' name='key' value=\"{escape(key, quote=True)}\">"
+        f"<input name='name' placeholder='Name' required>"
+        f"<input name='email' type='email' placeholder='email@example.com' required>"
+        f"<button class='primary'>Create organizer</button></form></div>"
     )
+    body = "<h1>🔑 Organizer access</h1>" + intro + links + form
     return page("Setup", body, [("🏀 Home", "/")])
 
 

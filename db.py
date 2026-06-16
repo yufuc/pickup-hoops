@@ -94,29 +94,7 @@ def init_db():
     for stmt in _schema_statements():
         conn.execute(stmt)
     conn.commit()
-    _maybe_bootstrap_admin(conn)
     conn.close()
-
-
-def _maybe_bootstrap_admin(conn):
-    """On a fresh deploy, create the first organizer from ADMIN_EMAIL/ADMIN_NAME.
-
-    No-op if the env var is unset, the email already exists, or an organizer is
-    already present. The resulting admin link is retrieved via /setup.
-    """
-    email = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
-    if not email:
-        return
-    if conn.execute("SELECT 1 FROM players WHERE is_organizer = 1 LIMIT 1").fetchone():
-        return
-    if conn.execute("SELECT 1 FROM players WHERE email = ?", (email,)).fetchone():
-        return
-    name = (os.environ.get("ADMIN_NAME") or email.split("@")[0]).strip()
-    conn.execute(
-        "INSERT INTO players (name, email, token, is_organizer) VALUES (?, ?, ?, 1)",
-        (name, email, new_token()),
-    )
-    conn.commit()
 
 
 def new_token():

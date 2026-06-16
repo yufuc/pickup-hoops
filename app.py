@@ -138,16 +138,52 @@ def index(h, conn):
     h._html(T.landing(game, players_with_status, org_token))
 
 
-@route("GET", r"/setup")
-def setup(h, conn):
-    """One-time retrieval of organizer admin link(s). Gated by SETUP_KEY env."""
-    key = os.environ.get("SETUP_KEY")
-    if not key or h._query().get("key") != key:
-        return h._html(T.simple("Setup", "Setup is not available."), status=404)
-    orgs = conn.execute(
+def _setup_allowed(conn, given_key):
+    """Setup is open when the DB has no organizer yet (first-run bootstrap), or
+    when SETUP_KEY is configured and matches. Returns (allowed, key_for_forms)."""
+    env_key = os.environ.get("SETUP_KEY")
+    if env_key and given_key == env_key:
+        return True, env_key
+    no_org = conn.execute(
+        "SELECT 1 FROM players WHERE is_organizer = 1 LIMIT 1"
+    ).fetchone() is None
+    return no_org, (env_key or "")
+
+
+def _organizers(conn):
+    return conn.execute(
         "SELECT name, email, token FROM players WHERE is_organizer = 1 ORDER BY id"
     ).fetchall()
-    h._html(T.setup_page(orgs))
+
+
+@route("GET", r"/setup")
+def setup(h, conn):
+    """Create / retrieve organizer access (see _setup_allowed for the gate)."""
+    allowed, key = _setup_allowed(conn, h._query().get("key", ""))
+    if not allowed:
+        return h._html(T.simple("Setup", "Setup is not available."), status=404)
+    h._html(T.setup_page(_organizers(conn), key))
+
+
+@route("POST", r"/setup/create")
+def setup_create(h, conn):
+    form = h._form()
+    allowed, key = _setup_allowed(conn, form.get("key", ""))
+    if not allowed:
+        return h._html(T.simple("Setup", "Setup is not available."), status=404)
+    name = form.get("name", "").strip()
+    email = form.get("email", "").strip().lower()
+    if name and email and not conn.execute(
+        "SELECT 1 FROM players WHERE email = ?", (email,)
+    ).fetchone():
+        conn.execute(
+            "INSERT INTO players (name, email, token, is_organizer) VALUES (?, ?, ?, 1)",
+            (name, email, db.new_token()),
+        )
+        conn.commit()
+    # Render directly (not redirect) so the new admin link is shown even when
+    # creating the very first organizer in open (no-key) mode.
+    h._html(T.setup_page(_organizers(conn), key))
 
 
 # ---- routes: player -------------------------------------------------------
