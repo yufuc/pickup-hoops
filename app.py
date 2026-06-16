@@ -113,14 +113,12 @@ def _upcoming_game(conn):
 @route("GET", "/")
 def index(h, conn):
     game = _upcoming_game(conn)
-    # Only expose the organizer shortcut on the public board in local dev. In
-    # production (Postgres) the admin link is private — retrieve it via /setup.
-    org_token = None
-    if not db.USE_PG:
-        org = conn.execute(
-            "SELECT token FROM players WHERE is_organizer = 1 ORDER BY id LIMIT 1"
-        ).fetchone()
-        org_token = org["token"] if org else None
+    # The organizer dashboard is openly linked from the landing board for
+    # everyone (a casual, fully-open model — anyone can manage games/roster).
+    org = conn.execute(
+        "SELECT token FROM players WHERE is_organizer = 1 ORDER BY id LIMIT 1"
+    ).fetchone()
+    org_token = org["token"] if org else None
     if game:
         rows = conn.execute(
             """SELECT p.*, a.status AS av
