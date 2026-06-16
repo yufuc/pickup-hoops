@@ -53,8 +53,9 @@ based on whether a database URL is present in the environment.
    your private organizer admin link, and bookmark it.
 
 How it maps to Vercel: `api/index.py` exposes the request handler as `handler`
-(invoked per request — no `serve_forever`), and `vercel.json` rewrites every path
-to it. `requirements.txt` installs the Postgres driver.
+(invoked per request — no `serve_forever`). `vercel.json` explicitly builds it with
+the `@vercel/python` runtime (bundling the root `*.py` modules) and routes every
+path to it. `requirements.txt` installs the Postgres driver.
 
 > Prefer the original always-on design? A process host (Render/Railway/Fly) runs
 > the local SQLite version nearly unchanged — set the `PORT` env var and a start
