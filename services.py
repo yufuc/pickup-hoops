@@ -1,12 +1,6 @@
-"""Domain logic shared by the web handlers and the background scheduler."""
+"""Domain logic shared by the web handlers."""
 import random
-from datetime import datetime, timedelta
-
-from emailer import send_email
-
-# Notifications fire once the game is within this many hours. Sending at the
-# 48h mark keeps every player inside the requested "36-48 hours before" window.
-NOTIFY_WINDOW_HOURS = 48
+from datetime import datetime
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -74,51 +68,30 @@ def team_roster(conn, game_id, team):
     ).fetchall()
 
 
-def notify_game(conn, game_id):
-    """Email every assigned player their team. Returns number of emails sent.
+def team_summary_text(conn, game):
+    """Plain-text block the organizer can copy/paste into an email.
 
-    No-op (returns 0) if teams aren't locked or the game was already notified.
+    Each player is listed on its own line; all email addresses are combined into
+    a single comma-separated line so the organizer can paste them straight into
+    the To/Bcc field.
     """
-    game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
-    if game is None or not game["teams_locked"] or game["notified"]:
-        return 0
+    light = team_roster(conn, game["id"], "light")
+    dark = team_roster(conn, game["id"], "dark")
 
-    label = game_label(game)
-    light = team_roster(conn, game_id, "light")
-    dark = team_roster(conn, game_id, "dark")
+    def block(team, roster):
+        header = f"{team} ({len(roster)}):"
+        if not roster:
+            return f"{header}\n(none yet)"
+        names = "\n".join(p["name"] for p in roster)
+        return f"{header}\n{names}"
 
-    def names(roster):
-        return ", ".join(p["name"] for p in roster) or "(none)"
+    all_emails = ", ".join(p["email"] for p in (light + dark))
 
-    sent = 0
-    for team, roster in (("LIGHT", light), ("DARK", dark)):
-        for player in roster:
-            subject = f"Hoops {label} — you're on {team}"
-            body = (
-                f"Hi {player['name']},\n\n"
-                f"You're IN for pick-up basketball: {label}.\n\n"
-                f"Your team: {team}  (wear a {team.lower()} shirt)\n\n"
-                f"LIGHT: {names(light)}\n"
-                f"DARK:  {names(dark)}\n\n"
-                f"See you on the court!"
-            )
-            send_email(conn, player["email"], subject, body, game_id=game_id)
-            sent += 1
-
-    conn.execute("UPDATE games SET notified = 1 WHERE id = ?", (game_id,))
-    conn.commit()
-    return sent
-
-
-def due_for_notification(conn, now=None):
-    """Locked, un-notified games whose start is within the notify window."""
-    now = now or datetime.now()
-    rows = conn.execute(
-        "SELECT * FROM games WHERE teams_locked = 1 AND notified = 0"
-    ).fetchall()
-    due = []
-    for g in rows:
-        remaining = game_datetime(g) - now
-        if timedelta(0) < remaining <= timedelta(hours=NOTIFY_WINDOW_HOURS):
-            due.append(g)
-    return due
+    return (
+        f"Pick-up basketball — {game_label(game)}\n\n"
+        f"{block('LIGHT', light)}\n\n"
+        f"{block('DARK', dark)}\n\n"
+        f"Light team: wear a light shirt. Dark team: wear a dark shirt. "
+        f"See you on the court!\n\n"
+        f"All emails: {all_emails}"
+    )

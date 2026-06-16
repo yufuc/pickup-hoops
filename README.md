@@ -1,12 +1,11 @@
 # 🏀 Pick-up Hoops — weekly game coordinator (prototype)
 
 Coordinates a weekly pick-up basketball game: players mark themselves **in/out**,
-the organizer splits the "in" players into **light vs. dark** teams, and the app
-**auto-emails each team ~48h before tip-off**.
+the organizer splits the "in" players into **light vs. dark** teams, then copies a
+ready-made **text block** to paste into an email they send to the players themselves.
 
 This is a **local prototype** built with the Python standard library only —
-no installs, no build step. Email sending is **stubbed** (printed to the console
-and saved to an in-app outbox); swap in a real provider when ready.
+no installs, no build step.
 
 ## Run
 
@@ -20,26 +19,22 @@ Open <http://localhost:8000> for a dev index of everyone's magic links.
 
 ## How it works
 
-- **Players** open their personal magic link (`/p/<token>`) and tap **I'm IN / I'm OUT**
-  for the upcoming game. Once teams are locked they can see their team.
+- **Players** mark **In / Out** for the upcoming game — either from the shared landing
+  board (a button next to their name) or their personal page (`/p/<token>`). Once teams
+  are locked they can see their own team.
 - **The organizer** opens `/admin/<token>` to:
   - schedule a game (pick any date — usually Friday, occasionally Thursday),
   - add players to the roster,
-  - **Suggest teams** (random balanced split of the "in" players), then tweak any
-    player's team via the dropdowns,
-  - **Lock teams**, then either let emails auto-send or **Send team emails now**.
-- **The scheduler** (`scheduler.py`) runs in a background thread, checking every 30s.
-  When a *locked, not-yet-notified* game is within **48 hours** of tip-off, it emails
-  each player their team assignment. Sending at the 48h mark keeps everyone inside the
-  requested 36–48h window even if the server was briefly down.
+  - **Suggest teams** (random balanced split of the "in" players), then **drag** players
+    between Unassigned / Light / Dark to tweak,
+  - **Lock teams**, then **Copy for email** — a formatted text block (each team's names
+    and email addresses) to paste into an email the organizer sends manually.
 
 ## Going to production (next steps)
 
-- **Email:** replace the body of `send_email` in `emailer.py` with a Resend/SendGrid/
-  Postmark/SMTP call. Nothing else changes.
-- **Hosting:** the scheduler is an in-process thread, fine for a single always-on
-  machine. For serverless hosting, move `due_for_notification` → `notify_game` behind a
-  real cron (e.g. a daily/hourly job).
+- **Hosting:** runs as a single always-on process with a local SQLite file. A
+  process-friendly host (Render/Railway/Fly) runs it nearly unchanged; serverless
+  (Vercel) would need a hosted DB + a WSGI refactor.
 - **Auth:** magic-link tokens are unguessable but never expire and live in the URL —
   fine for a casual group; add expiry/rotation if you need more.
 
@@ -49,8 +44,6 @@ Open <http://localhost:8000> for a dev index of everyone's magic links.
 |------|---------|
 | `app.py` | HTTP server + routing |
 | `db.py` | SQLite schema + connection helper |
-| `services.py` | Team suggestion, notification, scheduling-window logic |
-| `emailer.py` | Email delivery (stubbed) |
-| `scheduler.py` | Background notify thread |
-| `templates.py` | Server-rendered HTML |
+| `services.py` | Team suggestion + the copy-paste email summary |
+| `templates.py` | Server-rendered HTML (incl. drag-and-drop + copy button) |
 | `seed.py` | Sample data |

@@ -1,7 +1,7 @@
 """SQLite storage layer for the pick-up basketball coordinator.
 
 A new connection is opened per request (SQLite file access is cheap and this
-keeps things thread-safe between the HTTP threads and the scheduler thread).
+keeps things thread-safe across the HTTP server threads).
 """
 import os
 import sqlite3
@@ -32,7 +32,6 @@ CREATE TABLE IF NOT EXISTS games (
     game_date     TEXT NOT NULL,           -- YYYY-MM-DD (usually Friday, sometimes Thursday)
     start_time    TEXT NOT NULL DEFAULT '07:00',
     teams_locked  INTEGER NOT NULL DEFAULT 0,
-    notified      INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -48,15 +47,6 @@ CREATE TABLE IF NOT EXISTS assignments (
     player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
     team      TEXT NOT NULL CHECK (team IN ('light', 'dark')),
     PRIMARY KEY (game_id, player_id)
-);
-
-CREATE TABLE IF NOT EXISTS emails (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    game_id    INTEGER REFERENCES games(id) ON DELETE SET NULL,
-    recipient  TEXT NOT NULL,
-    subject    TEXT NOT NULL,
-    body       TEXT NOT NULL,
-    sent_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
 

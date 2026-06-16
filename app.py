@@ -9,7 +9,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import db
 import templates as T
 import services as S
-import scheduler
 
 PORT = 8000
 
@@ -85,8 +84,9 @@ def _organizer_by_token(conn, token):
 
 
 def _upcoming_game(conn):
+    """The next game that hasn't happened yet, else the most recent one."""
     return conn.execute(
-        "SELECT * FROM games WHERE notified = 0 ORDER BY game_date, start_time LIMIT 1"
+        "SELECT * FROM games WHERE game_date >= date('now') ORDER BY game_date, start_time LIMIT 1"
     ).fetchone() or conn.execute(
         "SELECT * FROM games ORDER BY game_date DESC, start_time DESC LIMIT 1"
     ).fetchone()
@@ -125,7 +125,7 @@ def player_home(h, conn, token):
         return h._html(T.simple("Unknown link", "This link isn't valid."), status=404)
     game = _upcoming_game(conn)
     status = my_team = None
-    locked = notified = False
+    locked = False
     if game:
         a = conn.execute(
             "SELECT status FROM availability WHERE game_id = ? AND player_id = ?",
@@ -137,8 +137,8 @@ def player_home(h, conn, token):
             (game["id"], player["id"]),
         ).fetchone()
         my_team = t["team"] if t else None
-        locked, notified = bool(game["teams_locked"]), bool(game["notified"])
-    h._html(T.player_home(player, game, status, my_team, locked, notified))
+        locked = bool(game["teams_locked"])
+    h._html(T.player_home(player, game, status, my_team, locked))
 
 
 @route("POST", r"/p/([\w-]+)/availability")
@@ -201,6 +201,37 @@ def add_player(h, conn, token):
     h._redirect(f"/admin/{token}")
 
 
+@route("POST", r"/admin/([\w-]+)/players/(\d+)/edit")
+def edit_player(h, conn, token, player_id):
+    if not _require_org(h, conn, token):
+        return
+    form = h._form()
+    name, email = form.get("name", "").strip(), form.get("email", "").strip().lower()
+    is_org = 1 if form.get("is_organizer") else 0
+    if name and email:
+        try:
+            conn.execute(
+                "UPDATE players SET name = ?, email = ?, is_organizer = ? WHERE id = ?",
+                (name, email, is_org, player_id),
+            )
+            conn.commit()
+        except Exception:
+            pass  # email collides with another player — ignore for the prototype
+    h._redirect(f"/admin/{token}")
+
+
+@route("POST", r"/admin/([\w-]+)/players/(\d+)/delete")
+def delete_player(h, conn, token, player_id):
+    org = _require_org(h, conn, token)
+    if not org:
+        return
+    # Don't let the acting organizer delete themselves out of their own session.
+    if str(org["id"]) != player_id:
+        conn.execute("DELETE FROM players WHERE id = ?", (player_id,))  # cascades availability + assignments
+        conn.commit()
+    h._redirect(f"/admin/{token}")
+
+
 @route("POST", r"/admin/([\w-]+)/games")
 def add_game(h, conn, token):
     org = _require_org(h, conn, token)
@@ -213,6 +244,30 @@ def add_game(h, conn, token):
             "INSERT INTO games (game_date, start_time) VALUES (?, ?)", (date, time)
         )
         conn.commit()
+    h._redirect(f"/admin/{token}")
+
+
+@route("POST", r"/admin/([\w-]+)/games/(\d+)/edit")
+def edit_game(h, conn, token, game_id):
+    if not _require_org(h, conn, token):
+        return
+    form = h._form()
+    date, time = form.get("game_date"), form.get("start_time", "07:00")
+    if date:
+        conn.execute(
+            "UPDATE games SET game_date = ?, start_time = ? WHERE id = ?",
+            (date, time, game_id),
+        )
+        conn.commit()
+    h._redirect(f"/admin/{token}")
+
+
+@route("POST", r"/admin/([\w-]+)/games/(\d+)/delete")
+def delete_game(h, conn, token, game_id):
+    if not _require_org(h, conn, token):
+        return
+    conn.execute("DELETE FROM games WHERE id = ?", (game_id,))  # cascades availability + assignments
+    conn.commit()
     h._redirect(f"/admin/{token}")
 
 
@@ -236,11 +291,12 @@ def admin_game(h, conn, token, game_id):
     dark = [r for r in rows if r["team"] == "dark"]
     unassigned = [r for r in rows if r["av_status"] == "in" and r["team"] is None]
     not_playing = [r for r in rows if r["av_status"] == "out"]
-    h._html(T.admin_game(org, game, unassigned, light, dark, not_playing))
+    summary = S.team_summary_text(conn, game)
+    h._html(T.admin_game(org, game, unassigned, light, dark, not_playing, summary))
 
 
 def _locked_guard(h, conn, token, game_id):
-    """Block edits once notified; return game row or None (response already sent)."""
+    """Return the game row, or None if missing (404 already sent)."""
     game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
     if not game:
         h._html(T.simple("Not found", "No such game.", back=f"/admin/{token}"), status=404)
@@ -286,31 +342,13 @@ def lock(h, conn, token, game_id):
 def unlock(h, conn, token, game_id):
     if not _require_org(h, conn, token):
         return
-    conn.execute("UPDATE games SET teams_locked = 0 WHERE id = ? AND notified = 0", (game_id,))
+    conn.execute("UPDATE games SET teams_locked = 0 WHERE id = ?", (game_id,))
     conn.commit()
     h._redirect(f"/admin/{token}/games/{game_id}")
 
 
-@route("POST", r"/admin/([\w-]+)/games/(\d+)/notify")
-def notify(h, conn, token, game_id):
-    if not _require_org(h, conn, token):
-        return
-    S.notify_game(conn, game_id)
-    h._redirect(f"/admin/{token}/games/{game_id}")
-
-
-@route("GET", r"/admin/([\w-]+)/outbox")
-def view_outbox(h, conn, token):
-    org = _require_org(h, conn, token)
-    if not org:
-        return
-    emails = conn.execute("SELECT * FROM emails ORDER BY id DESC").fetchall()
-    h._html(T.outbox(org, emails))
-
-
 def main():
     db.init_db()
-    scheduler.start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"\n🏀 Pick-up Hoops running at http://localhost:{PORT}\n", flush=True)
     try:

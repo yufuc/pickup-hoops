@@ -2,7 +2,7 @@
 team page (vanilla JS persisting via fetch)."""
 from html import escape
 
-from services import game_label, NOTIFY_WINDOW_HOURS
+from services import game_label
 
 CSS = """
 * { box-sizing: border-box; }
@@ -32,7 +32,12 @@ form.inline { display: inline; }
 input, select { font: inherit; padding: .45rem; border-radius: 8px; border: 1px solid #ccc; }
 .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .datebanner { background: #e3f2fd; border: 1px solid #90caf9; border-radius: 10px;
-              padding: .9rem 1.25rem; font-size: 1.1rem; }
+              padding: 1.1rem 1.4rem; font-size: 1.25rem; }
+.datebanner .gamedate { display: block; font-size: 1.9rem; font-weight: 700;
+                        line-height: 1.2; margin-top: .35rem; color: #0d47a1; }
+.statcard { display: flex; align-items: baseline; gap: .6rem; }
+.statcard .big { font-size: 2.6rem; font-weight: 800; color: #2e7d32; line-height: 1; }
+.statcard .sub { color: #777; font-size: .95rem; }
 /* drag-and-drop teams */
 .teamcol { display: flex; gap: 1rem; flex-wrap: wrap; }
 .dropzone { flex: 1; min-width: 200px; border-radius: 10px; padding: .75rem; min-height: 120px;
@@ -50,6 +55,8 @@ input, select { font: inherit; padding: .45rem; border-radius: 8px; border: 1px 
 .chip.dragging { opacity: .4; }
 .chip.static { cursor: default; box-shadow: none; }
 .hint { font-size: .85rem; color: #777; margin: .25rem 0 1rem; }
+.copybox { width: 100%; min-height: 180px; padding: .6rem; border-radius: 8px;
+           border: 1px solid #ccc; font-family: ui-monospace, Menlo, monospace; font-size: .85rem; }
 """
 
 
@@ -85,13 +92,24 @@ def landing(game, players_with_status, org_token):
 
     if game is None:
         banner = "<div class='datebanner'>No game scheduled yet. Check back soon!</div>"
+        headcount = ""
         rows = ""
         for p, _ in players_with_status:
             rows += f"<tr><td>{escape(p['name'])}{' ⭐' if p['is_organizer'] else ''}</td><td class='muted'>—</td><td></td></tr>"
     else:
         banner = (
-            f"<div class='datebanner'>🗓️ Mark your availability for<br>"
-            f"<strong>{escape(game_label(game))}</strong></div>"
+            f"<div class='datebanner'>🗓️ Mark your availability for"
+            f"<span class='gamedate'>{escape(game_label(game))}</span></div>"
+        )
+        in_count = sum(1 for _, s in players_with_status if s == "in")
+        out_count = sum(1 for _, s in players_with_status if s == "out")
+        no_resp = len(players_with_status) - in_count - out_count
+        headcount = (
+            f"<div class='card statcard'>"
+            f"<span class='big'>{in_count}</span>"
+            f"<span class='sub'>player{'' if in_count == 1 else 's'} in"
+            f" &nbsp;·&nbsp; {out_count} out &nbsp;·&nbsp; {no_resp} no response</span>"
+            f"</div>"
         )
         rows = ""
         for p, status in players_with_status:
@@ -113,6 +131,7 @@ def landing(game, players_with_status, org_token):
     body = (
         "<h1>🏀 Pick-up Hoops</h1>"
         f"{banner}"
+        f"{headcount}"
         "<div class='card'><h2 style='margin-top:0'>Who's playing?</h2>"
         "<p class='hint'>Tap <strong>In</strong> or <strong>Out</strong> next to your name. "
         "⭐ = organizer.</p>"
@@ -122,7 +141,7 @@ def landing(game, players_with_status, org_token):
 
 
 # ---- player's own page (magic link) --------------------------------------
-def player_home(player, game, status, my_team, locked, notified):
+def player_home(player, game, status, my_team, locked):
     nav = [("🏀 Home", "/")]
     if game is None:
         inner = "<div class='card'>No game scheduled yet. Check back soon!</div>"
@@ -137,13 +156,11 @@ def player_home(player, game, status, my_team, locked, notified):
             f"<button class='out{out_active}' name='status' value='out'>I'm OUT</button></form>"
         )
         team_block = ""
-        if notified and my_team:
+        if locked and my_team:
             team_block = (
                 f"<div class='card dropzone {my_team}'><strong>Your team: {my_team.upper()}</strong>"
                 f"<br>Wear a {my_team} shirt.</div>"
             )
-        elif locked and my_team:
-            team_block = f"<div class='card'>Teams are set — you're on <strong>{my_team.upper()}</strong>. Email goes out ~{NOTIFY_WINDOW_HOURS}h before tip-off.</div>"
         elif locked and not my_team:
             team_block = "<div class='card muted'>Teams are set but you're not assigned (marked out?).</div>"
         inner = (
@@ -156,33 +173,58 @@ def player_home(player, game, status, my_team, locked, notified):
 
 # ---- organizer dashboard --------------------------------------------------
 def admin_dashboard(org, players, games):
-    nav = [("🏀 Home", "/"), ("Outbox", f"/admin/{org['token']}/outbox")]
+    token = org["token"]
+    nav = [("🏀 Home", "/")]
     game_rows = ""
     for g in games:
-        flags = ""
-        if g["notified"]:
-            flags = "<span class='pill sent'>EMAILS SENT</span>"
-        elif g["teams_locked"]:
-            flags = "<span class='pill locked'>TEAMS LOCKED</span>"
-        game_rows += (
-            f"<tr><td><a href='/admin/{org['token']}/games/{g['id']}'>{escape(game_label(g))}</a></td>"
-            f"<td>{flags}</td></tr>"
-        )
+        flags = "<span class='pill locked'>LOCKED</span>" if g["teams_locked"] else ""
+        game_rows += f"""
+        <tr>
+          <td><a href='/admin/{token}/games/{g['id']}'>open</a> {flags}</td>
+          <td>
+            <form method='post' action='/admin/{token}/games/{g['id']}/edit' class='row'>
+              <input type='date' name='game_date' value='{g['game_date']}' required>
+              <input type='time' name='start_time' value='{g['start_time']}' required>
+              <button>Save</button>
+            </form>
+          </td>
+          <td>
+            <form method='post' action='/admin/{token}/games/{g['id']}/delete' class='inline'
+                  onsubmit="return confirm('Delete this game and its availability/teams?')">
+              <button class='danger'>Delete</button>
+            </form>
+          </td>
+        </tr>"""
     if not game_rows:
-        game_rows = "<tr><td class='muted' colspan='2'>No games yet.</td></tr>"
+        game_rows = "<tr><td class='muted' colspan='3'>No games yet.</td></tr>"
 
-    player_rows = "".join(
-        f"<tr><td>{escape(p['name'])}{' ⭐' if p['is_organizer'] else ''}</td>"
-        f"<td class='muted'>{escape(p['email'])}</td></tr>"
-        for p in players
-    )
+    player_rows = ""
+    for p in players:
+        checked = "checked" if p["is_organizer"] else ""
+        player_rows += f"""
+        <tr>
+          <td>
+            <form method='post' action='/admin/{token}/players/{p['id']}/edit' class='row'>
+              <input name='name' value="{escape(p['name'], quote=True)}" required>
+              <input type='email' name='email' value="{escape(p['email'], quote=True)}" required>
+              <label class='muted'><input type='checkbox' name='is_organizer' value='1' {checked}> org</label>
+              <button>Save</button>
+            </form>
+          </td>
+          <td>
+            <form method='post' action='/admin/{token}/players/{p['id']}/delete' class='inline'
+                  onsubmit="return confirm('Delete {escape(p['name'], quote=True)}?')">
+              <button class='danger'>Delete</button>
+            </form>
+          </td>
+        </tr>"""
 
     body = f"""
     <h1>🏀 Organizer · {escape(org['name'])}</h1>
     <div class='card'><h2 style='margin-top:0'>Games</h2>
-      <table><tr><th>Game</th><th></th></tr>{game_rows}</table>
+      <table><tr><th></th><th>Date &amp; time</th><th></th></tr>{game_rows}</table>
       <h2>Schedule a game</h2>
-      <form method='post' action='/admin/{org['token']}/games' class='row'>
+      <form method='post' action='/admin/{token}/games' class='row'>
         <label>Date <input type='date' name='game_date' required></label>
         <label>Time <input type='time' name='start_time' value='07:00' required></label>
         <button class='primary'>Add game</button>
@@ -191,9 +233,9 @@ def admin_dashboard(org, players, games):
     </div>
 
     <div class='card'><h2 style='margin-top:0'>Roster</h2>
-      <table><tr><th>Name</th><th>Email</th></tr>{player_rows}</table>
+      <table><tr><th>Player</th><th></th></tr>{player_rows}</table>
       <h2>Add player</h2>
-      <form method='post' action='/admin/{org['token']}/players' class='row'>
+      <form method='post' action='/admin/{token}/players' class='row'>
         <input name='name' placeholder='Name' required>
         <input name='email' type='email' placeholder='email@example.com' required>
         <label class='muted'><input type='checkbox' name='is_organizer' value='1'> organizer</label>
@@ -220,15 +262,13 @@ def _zone(team, title, members, draggable):
     )
 
 
-def admin_game(org, game, unassigned, light, dark, not_playing):
+def admin_game(org, game, unassigned, light, dark, not_playing, summary):
     token = org["token"]
     locked = game["teams_locked"]
-    notified = game["notified"]
-    nav = [("🏀 Home", "/"), ("Dashboard", f"/admin/{token}"),
-           ("Outbox", f"/admin/{token}/outbox")]
+    nav = [("🏀 Home", "/"), ("Dashboard", f"/admin/{token}")]
 
     in_count = len(unassigned) + len(light) + len(dark)
-    draggable = not locked and not notified
+    draggable = not locked
 
     zones = (
         f"<div class='teamcol'>"
@@ -244,15 +284,10 @@ def admin_game(org, game, unassigned, light, dark, not_playing):
         if draggable else ""
     )
 
-    if notified:
-        actions = "<p class='pill sent'>Emails already sent for this game.</p>"
-    elif locked:
+    if locked:
         actions = (
             f"<form method='post' action='/admin/{token}/games/{game['id']}/unlock' class='inline'>"
-            f"<button>Unlock to edit</button></form> "
-            f"<form method='post' action='/admin/{token}/games/{game['id']}/notify' class='inline'>"
-            f"<button class='primary'>Send team emails now</button></form>"
-            f"<p class='hint'>Otherwise emails auto-send ~{NOTIFY_WINDOW_HOURS}h before tip-off.</p>"
+            f"<button>Unlock to edit</button></form>"
         )
     else:
         actions = (
@@ -260,6 +295,19 @@ def admin_game(org, game, unassigned, light, dark, not_playing):
             f"<button class='primary'>Suggest teams (random split)</button></form> "
             f"<form method='post' action='/admin/{token}/games/{game['id']}/lock' class='inline'>"
             f"<button>Lock teams</button></form>"
+        )
+
+    # Copy-paste block: the organizer pastes this into an email they send manually.
+    copy_block = ""
+    if light or dark:
+        note = ("Teams are locked — players can now see their assignment too."
+                if locked else
+                "Preview — tip: lock teams to freeze them and reveal assignments to players.")
+        copy_block = (
+            f"<div class='card'><h2 style='margin-top:0'>📋 Copy for email</h2>"
+            f"<p class='hint'>{note}</p>"
+            f"<textarea id='copybox' readonly class='copybox'>{escape(summary)}</textarea>"
+            f"<div style='margin-top:.5rem'><button id='copybtn' class='primary'>Copy to clipboard</button></div></div>"
         )
 
     out_block = ""
@@ -271,10 +319,10 @@ def admin_game(org, game, unassigned, light, dark, not_playing):
             f"<div class='chips' style='flex-direction:row;flex-wrap:wrap'>{chips}</div></div>"
         )
 
-    script = ""
+    drag_script = ""
     if draggable:
         assign_url = f"/admin/{token}/games/{game['id']}/assign"
-        script = f"""
+        drag_script = f"""
         <script>
         const ASSIGN_URL = {assign_url!r};
         function refreshCounts() {{
@@ -308,35 +356,37 @@ def admin_game(org, game, unassigned, light, dark, not_playing):
         </script>
         """
 
+    copy_script = """
+    <script>
+    (function () {
+      const btn = document.getElementById('copybtn');
+      const box = document.getElementById('copybox');
+      if (!btn || !box) return;
+      btn.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(box.value); }
+        catch (e) { box.focus(); box.select(); document.execCommand('copy'); }
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      });
+    })();
+    </script>
+    """ if copy_block else ""
+
     body = f"""
     <h1>{escape(game_label(game))}</h1>
     <p>{in_count} player(s) IN
-       {"· <span class='pill locked'>LOCKED</span>" if locked else ""}
-       {"· <span class='pill sent'>NOTIFIED</span>" if notified else ""}</p>
+       {"· <span class='pill locked'>LOCKED</span>" if locked else ""}</p>
 
     <div class='card'><h2 style='margin-top:0'>Teams</h2>
       {hint}{zones}
       <div style='margin-top:1rem'>{actions}</div>
     </div>
+    {copy_block}
     {out_block}
-    {script}
+    {drag_script}{copy_script}
     """
     return page(game_label(game), body, nav)
-
-
-def outbox(org, emails):
-    nav = [("🏀 Home", "/"), ("Dashboard", f"/admin/{org['token']}")]
-    if not emails:
-        rows = "<div class='card muted'>No emails sent yet.</div>"
-    else:
-        rows = "".join(
-            f"<div class='card'><div class='muted'>{escape(e['sent_at'])} → {escape(e['recipient'])}</div>"
-            f"<strong>{escape(e['subject'])}</strong>"
-            f"<pre style='white-space:pre-wrap;font:inherit;margin:.5rem 0 0'>{escape(e['body'])}</pre></div>"
-            for e in emails
-        )
-    body = f"<h1>📤 Outbox (stubbed)</h1>{rows}"
-    return page("Outbox", body, nav)
 
 
 def simple(title, message, back=None):
