@@ -1,0 +1,11 @@
+# Local SQLite database (runtime data — not source)
+pickup.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
