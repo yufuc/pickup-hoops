@@ -1,8 +1,10 @@
 """Vercel Python serverless entry point.
 
-Vercel's Python runtime invokes a class named `handler` (a BaseHTTPRequestHandler
-subclass) once per request — there is no long-lived `serve_forever()`. We reuse
-the app's existing handler/routing unchanged and just ensure the schema exists.
+Vercel's Python runtime looks for a top-level class named `handler` (a
+BaseHTTPRequestHandler subclass) and invokes it once per request — there is no
+long-lived `serve_forever()`. We subclass the app's existing handler so all the
+routing is reused. The schema is created lazily on the first request (see
+app.Handler._dispatch), so nothing touches the database at build/import time.
 """
 import os
 import sys
@@ -10,7 +12,8 @@ import sys
 # Make the project root importable (app.py, db.py, ... live one level up).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import db
-from app import Handler as handler  # noqa: E402  (Vercel looks for `handler`)
+from app import Handler  # noqa: E402
 
-db.init_db()
+
+class handler(Handler):  # Vercel detects this top-level `handler` class
+    pass

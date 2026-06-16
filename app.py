@@ -17,6 +17,7 @@ PORT = int(os.environ.get("PORT", 8000))
 
 # ---- small routing helper -------------------------------------------------
 ROUTES = []  # (method, compiled_regex, handler_name)
+_DB_READY = False  # schema is created lazily on the first request (see _dispatch)
 
 
 def route(method, pattern):
@@ -55,6 +56,10 @@ class Handler(BaseHTTPRequestHandler):
         return {k: v[0] for k, v in urllib.parse.parse_qs(qs).items()}
 
     def _dispatch(self, method):
+        global _DB_READY
+        if not _DB_READY:
+            db.init_db()  # idempotent; runs once per (cold) process
+            _DB_READY = True
         path = urllib.parse.urlparse(self.path).path
         # On Vercel all paths are rewritten to this function; if the rewrite
         # target leaks through as the path, recover the original route.
